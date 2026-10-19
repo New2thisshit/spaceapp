@@ -41,6 +41,8 @@ interface TraceScope {
   operation?: WorkflowSpanRecord["operation"];
   attributes: Record<string, string>;
   links: TraceSpanLink[];
+  /** A background mission's span identity is stable, so a paused pass must not export it. */
+  stableIdentity?: boolean;
 }
 
 const scopes = new AsyncLocalStorage<TraceScope>();
@@ -48,6 +50,8 @@ const { spaceTracing } = proxySinks<WorkflowTracingSinks>();
 let runScope: TraceScope | null = null;
 let runInfo: WorkflowInfo | null = null;
 let scopeSequence = 0;
+// First start of each stable background span still waiting to be exported in this run.
+let pendingStableStarts = new Map<string, number>();
 
 /**
  * A supervisor serves many requests. Its run roots its own trace and only
@@ -110,6 +114,7 @@ async function observe<T>(scope: TraceScope, execute: () => Promise<T>, sdkEntry
   let reasonCode: string | undefined;
   let invoked = false;
   let taskFailure = false;
+  let paused = false;
   try {
     let result: T;
     try {
@@ -131,6 +136,8 @@ async function observe<T>(scope: TraceScope, execute: () => Promise<T>, sdkEntry
         } else if (status === "CANCELLED" || status === "INTERRUPTED") {
           outcome = "CANCELLED";
           reasonCode = "WORKFLOW_CANCELLED";
+        } else if (status === "PAUSED") {
+          paused = true;
         }
       }
     } catch {}
@@ -155,7 +162,12 @@ async function observe<T>(scope: TraceScope, execute: () => Promise<T>, sdkEntry
     }
     throw error;
   } finally {
-    if (!taskFailure) record(scope, outcome, reasonCode);
+    // A paused background mission is requeued under the same stable span identity:
+    // export that span once, from the pass that finishes the mission.
+    if (!taskFailure && !(paused && scope.stableIdentity)) {
+      record(scope, outcome, reasonCode);
+      if (scope.stableIdentity) pendingStableStarts.delete(scope.context.parentId);
+    }
   }
 }
 
@@ -178,13 +190,17 @@ function makeOperationScope(
     parentId: deterministicWorkflowSpanId(runInfo.runId, `${operation}:${scopeSequence}`),
     flags: parent?.flags ?? continued?.flags ?? "01"
   };
+  // A stable background span covers every pass of its mission in this run.
+  const startTimeMs = (background && pendingStableStarts.get(context.parentId)) || Date.now();
+  if (background) pendingStableStarts.set(context.parentId, startTimeMs);
   const scope: TraceScope = {
     context,
     parentSpanId: parent?.parentId ?? null,
-    startTimeMs: Date.now(),
+    startTimeMs,
     operation,
     attributes: workflowTraceAttributes(args),
-    links: []
+    links: [],
+    stableIdentity: background !== null
   };
   addLink(scope, continued);
   if (background) addLink(scope, incoming);
@@ -220,6 +236,7 @@ export function interceptors(): WorkflowInterceptors {
   runScope = null;
   runInfo = null;
   scopeSequence = 0;
+  pendingStableStarts = new Map();
   return {
     inbound: [{
       async execute(input, next) {

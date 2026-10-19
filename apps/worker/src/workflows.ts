@@ -334,7 +334,8 @@ async function continuingRoomAgentSupervisorWorkflow(rawInput: RoomAgentSupervis
         try {
           return await turnScope.run(async () => {
             const state = await supervisorActivities.checkRoomAgentSupervisorTurn(item);
-            if (state === "PAUSED") { paused = true; return; }
+            // The trace scope exports a paused background pass only once the mission finishes.
+            if (state === "PAUSED") { paused = true; return { status: "PAUSED" as const }; }
             if (state === "SKIP") {
               await supervisorActivities.discardRoomAgentSupervisorTurn({ item, reason: "Turn is no longer active or was superseded." });
               return;

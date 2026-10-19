@@ -57,8 +57,9 @@ routes set the modules they keep, for example
 
 Set `SPACE_OTEL_EXPORTER_OTLP_ENDPOINT` to the collector's HTTP(S) base URL, for
 example `http://127.0.0.1:4318`, in the API and worker processes that should export
-traces. The exporter sends OTLP/HTTP JSON to `/v1/traces`; a URL already ending in
-that path is used directly. An unset or invalid endpoint disables export.
+traces. The exporter always appends `/v1/traces` and sends OTLP/HTTP JSON there,
+so give the base URL, not `.../v1/traces`. An unset or invalid endpoint disables
+export.
 
 The API exports request spans. The main worker and both memory workers export
 workflow, child workflow, mission and activity-attempt spans, with propagation

@@ -217,7 +217,8 @@ Without the endpoint, every activity still writes `activity.started` and
 
 The trace context is local by default. Set `SPACE_OTEL_EXPORTER_OTLP_ENDPOINT`
 to an HTTP(S) collector base URL (for example `http://127.0.0.1:4318`) to enable
-OTLP/HTTP JSON export. The shared runtime exporter appends `/v1/traces` when needed.
+OTLP/HTTP JSON export. The shared runtime exporter always appends `/v1/traces`, so
+the setting is the base URL, not the full traces path.
 There is no OpenTelemetry runtime dependency and no export when the setting is absent
 or invalid. Enable it separately for the API and each worker process.
 
@@ -243,7 +244,9 @@ or invalid. Enable it separately for the API and each worker process.
   monitoring polls for background pane work, a stop signal, which carries no
   trace context, or a mission queued without context) stays in that supervisor
   trace and never joins an earlier request's trace. A paused mission is
-  re-checked every second, and each check is a short mission span. The run span
+  re-checked every second. Each check of an ordinary mission is a short mission
+  span; a background continuation keeps one stable span identity, so it is
+  exported once, from its first check until it finishes. The run span
   itself is exported only when the run ends (completion or continue-as-new), so
   while a supervisor is active or idle its mission and poll spans reference a
   parent the collector has not received yet.

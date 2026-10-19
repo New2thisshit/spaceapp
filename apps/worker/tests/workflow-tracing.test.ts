@@ -156,6 +156,36 @@ describe("workflow tracing scopes", () => {
     expect(missions[1]!.traceId).not.toBe(missions[0]!.traceId);
   });
 
+  it("exports a paused background mission once under its stable span, from its first pass to its finish", async () => {
+    const tracing = interceptors();
+    const background = { traceId: "trace:bg-paused", agentRunId: "agent_run:bg-paused", continuedTraceparent: traceparent };
+    const stable = backgroundMissionTraceContext(background)!;
+    const ordinary = { traceparent, missionId: "room_agent_mission:ordinary" };
+    const now = vi.spyOn(Date, "now");
+    try {
+      await tracing.inbound![0]!.execute!({ args: [{ traceparent }], headers: {} }, async () => {
+        now.mockReturnValue(5_000);
+        await withWorkflowTraceContext(background, async () => ({ status: "PAUSED" as const }));
+        await withWorkflowTraceContext(ordinary, async () => ({ status: "PAUSED" as const }));
+        now.mockReturnValue(6_000);
+        await withWorkflowTraceContext(background, async () => ({ status: "PAUSED" as const }));
+        await withWorkflowTraceContext(ordinary, async () => ({ status: "PAUSED" as const }));
+        now.mockReturnValue(7_000);
+        await withWorkflowTraceContext(background, async () => ({ status: "COMPLETED" as const }));
+      });
+    } finally {
+      now.mockRestore();
+    }
+    const missions = context.spans.filter((span) => span.operation === "mission");
+    const stableSpans = missions.filter((span) => span.spanId === stable.parentId);
+    expect(stableSpans).toHaveLength(1);
+    expect(stableSpans[0]).toMatchObject({ traceId: stable.traceId, startTimeMs: 5_000, endTimeMs: 7_000, outcome: "COMPLETED" });
+    // Ordinary missions keep one short span per pass, each with its own identity.
+    const ordinarySpans = missions.filter((span) => span.spanId !== stable.parentId);
+    expect(ordinarySpans).toHaveLength(2);
+    expect(new Set(ordinarySpans.map((span) => span.spanId)).size).toBe(2);
+  });
+
   it("keeps returned failures and thrown errors unchanged and never records their messages", async () => {
     const tracing = interceptors();
     // A workflow fails only with a Temporal failure; a plain Error fails (and retries) the task.
