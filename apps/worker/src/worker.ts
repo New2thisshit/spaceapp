@@ -46,6 +46,10 @@ const worker = await Worker.create({
   // Structured, correlated activity records and worker metrics. Activity-side
   // only: the workflow sandbox and its replay behaviour are unchanged.
   ...createWorkerTracing(spans)
+}).catch(async (error: unknown) => {
+  // The run's finally below closes the exporter; a worker that never starts closes it here.
+  await spans?.close();
+  throw error;
 });
 
 // Optional loopback-only Prometheus endpoint for worker metrics.

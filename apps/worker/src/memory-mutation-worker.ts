@@ -24,6 +24,10 @@ if (!memoryMutationsEnabled(process.env)) {
     activities: { executePersistedMemoryChangeSet },
     ...memoryMutationWorkerOptions,
     ...createWorkerTracing(spans)
+  }).catch(async (error: unknown) => {
+    // The run's finally below closes the exporter; a worker that never starts closes it here.
+    await spans?.close();
+    throw error;
   });
   console.log(JSON.stringify({ service, status: "running", address, namespace, taskQueue: MEMORY_MUTATION_TASK_QUEUE }));
   const stopReloadWatch = reloadWhenServicesCommitChanges(worker, { log: (message) => console.log(JSON.stringify({ service, status: "reloading", message })) });
